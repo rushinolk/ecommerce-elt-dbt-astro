@@ -1,0 +1,12 @@
+olist_dbt: 
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      threads: 1
+      host: olist-dw.c274goy8mhl0.us-east-1.rds.amazonaws.com
+      port: 5432         
+      user: postgres
+      pass: leywindev 
+      dbname: olist_dbt    
+      schema: dbt_arthur 

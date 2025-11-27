@@ -1,0 +1,7 @@
+astronomer-cosmos
+pandas
+sqlalchemy
+requests
+apache-airflow-providers-postgres
+pyarrow
+psycopg2-binary

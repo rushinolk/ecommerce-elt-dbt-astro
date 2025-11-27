@@ -1,0 +1,6 @@
+project:
+  name: olist_dbt_astro
+postgres:
+  port: 6543 
+webserver:
+  port: 8080
