@@ -49,6 +49,8 @@ with DAG(
     def setup_database():
         hook = PostgresHook(postgres_conn_id='postgres_olist_dw')
         hook.run("DROP SCHEMA IF EXISTS bronze_olist CASCADE;")
+        hook.run("DROP SCHEMA IF EXISTS dbt_arthur_meta CASCADE;")
+
         hook.run("CREATE SCHEMA IF NOT EXISTS bronze_olist;")
         hook.run("CREATE SCHEMA IF NOT EXISTS dbt_arthur;")
 

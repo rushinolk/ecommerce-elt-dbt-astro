@@ -10,8 +10,8 @@ with produtos as (
         oi.price,
         oi.freight_value,
         oi.total_value
-    from {{ref('stg_orders_itens')}} oi
-    left join {{ref('stg_products')}} pr
+    from {{ref('dim_orders_itens')}} oi
+    left join {{ref('dim_products')}} pr
     on oi.product_id = pr.product_id
 ), pedidos as (
     select  
@@ -29,12 +29,10 @@ with produtos as (
         ord.dias_ate_aprovacao,
         ord.dia_entrega_final,
         ord.dias_estimativa_real
-    from {{ref('stg_orders')}} ord
+    from {{ref('dim_orders')}} ord
     left join {{ref('stg_customers')}} cus
     on ord.customer_id = cus.customer_id
-
 ), fato as (
-
     select 
         pe.customer_unique_id,
         pe.customer_id,
