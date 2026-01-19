@@ -1,52 +1,79 @@
 # Olist Data Pipeline: Engenharia de Dados com dbt, Airflow (Cosmos) e AWS
 
 ## 📖 Sobre o Projeto
-Este projeto simula um ambiente real de Engenharia de Dados utilizando o dataset público de e-commerce brasileiro (Olist). O objetivo principal não foi apenas movimentar dados, mas construir um pipeline robusto focado em **Qualidade de Dados (Data Quality)** e **Governança**.
 
-O pipeline consome dados brutos (CSV), trata inconsistências reais (nulos, duplicatas, erros de tipagem) e entrega dados confiáveis e testados em um Data Warehouse na nuvem, utilizando o **dbt** integrado ao **Airflow** via **Astronomer Cosmos**.
+Este projeto implementa um pipeline de dados **ELT (Extract, Load, Transform)** completo utilizando o dataset do E-commerce Olist. O objetivo foi simular um ambiente corporativo moderno, onde a infraestrutura é gerenciada via código e a qualidade dos dados é garantida através de testes automatizados.
 
+O projeto utiliza o **Astro CLI** para gerenciamento do ambiente Airflow e segue uma arquitetura modular: uma DAG dedicada para ingestão de dados brutos (Python) e outra para transformação (dbt), garantindo desacoplamento e facilidade de manutenção.
 ---
 
 ## 🏗️ Arquitetura (Medallion)
 
-O projeto segue a arquitetura de camadas para garantir organização, rastreabilidade e performance:
+O pipeline foi desenhado seguindo a arquitetura **Medallion**, orquestrada em duas etapas distintas:
 
-1.  **Bronze (Raw):** Ingestão dos arquivos CSV originais, convertidos para formato otimizado e carregados no **AWS RDS (PostgreSQL)**.
-2.  **Silver (Trusted):**
-    * Limpeza e padronização de nomes de colunas.
-    * **Tipagem Forte:** Conversão de strings para `TIMESTAMP`, `NUMERIC` e `INT` via SQL `CAST`.
-    * **Regras de Negócio:** Criação de colunas calculadas como `dias_ate_aprovacao` e `tempo_entrega_real`.
-    * **Tratamento de Nulos:** Aplicação de regras de *fallback* (ex: `COALESCE`) para dados incompletos.
-3.  **Gold (Analytics):**
-    * **Modelagem Dimensional:** Criação de tabelas Fato e Dimensões prontas para BI.
-    * **Deduplicação:** Unificação de cadastros de clientes para garantir visão única.
+1.  **Ingestion Layer (DAG `01_ingestion`):**
+    * **Setup Database (`setup_database`):** Task inicial que utiliza `PostgresHook` para garantir a limpeza e criação dos schemas (`bronze_olist`, etc.) antes da carga. Isso garante **idempotência**: o pipeline limpa o próprio ambiente antes de começar.
+    * Scripts Python extraem os dados brutos (CSV).
+    * Converte para o formato parquet e carga na camada **Bronze** no **AWS RDS (PostgreSQL)**.
+    * **Trigger Controller:** Ao finalizar o sucesso da carga, utiliza o `TriggerDagRunOperator` para disparar automaticamente a próxima etapa.
+
+3.  **Transformation Layer (DAG `02_transform`):**
+    * Disparada automaticamente após o sucesso da ingestão (Dataset/Trigger).
+    * O **dbt Core** assume o comando para transformar os dados dentro do banco (ELT).
+    * **Silver:** Limpeza (`COALESCE`), tipagem (`CAST`) e padronização.
+    * **Gold:** Modelagem dimensional (Fato/Dimensões) e deduplicação de clientes.
 
 ---
 
 ## 🛠️ Tech Stack
 
 * **Linguagem:** Python 3.9+ & SQL
-* **Transformação & Testes:** dbt Core (Data Build Tool)
-* **Orquestração:** Apache Airflow (via Astronomer Cosmos)
+* **Orquestração & Infra:** Apache Airflow via **Astro CLI**
+* **Transformação:** dbt Core (integrado via Cosmos/BashOperator)
 * **Banco de Dados:** AWS RDS (PostgreSQL)
-* **Infraestrutura:** Docker & Docker Compose
-
+* **Gerenciamento de Config:** `airflow_settings.yaml` (Connections as Code)
 ---
 
+## 📁 Estrutura do Projeto
+
+```text
+olist-data-pipeline/
+├── dags/
+│   ├── 01_ingestion.py       # Extração e Carga (Python Puro)
+│   └── 02_transform.py       # Transformação (dbt runner)
+├── include/
+│   └── dbt/                  # Projeto dbt completo
+│       ├── data/             # Dados brutos (CSV)
+│       ├── models/           # Modelos de transformação (DBT)
+│       ├── data_staging/     # Dados convertidos (PARQUET)
+│       ├── tests/            # Testes singulares
+│       └── dbt_project.yml
+├── tests/                    # Testes unitários do Airflow
+├── airflow_settings.yaml     # Configuração automática de conexões
+├── Dockerfile                # Customização da imagem Astro Runtime
+└── README.md
+```
+
+---
 ## ✨ Destaques Técnicos
 
-### 1. Tratamento de Data Quality (Camada Silver)
-Dados reais raramente vêm limpos. Implementei estratégias de saneamento diretamente no SQL:
-* **Categorias Nulas:** Produtos sem categoria foram tratados via `COALESCE(category, 'outros')` para evitar "buracos" nas análises de BI.
-* **Datas:** Conversão explícita de texto para `TIMESTAMP` para permitir cálculos precisos de SLA logístico.
+### 1. Pipeline Idempotente e Auto-Gerenciável
+A task `setup_database` na DAG de ingestão roda comandos DDL (`DROP SCHEMA IF EXISTS` / `CREATE SCHEMA`) antes de qualquer dado ser processado. Isso torna o pipeline **resiliente**: ele garante um estado limpo a cada execução, evitando conflitos ou duplicidade de dados antigos na camada Bronze.
 
-### 2. Testes Automatizados de Integridade (dbt Tests)
-Para garantir a confiabilidade do Data Warehouse, configurei testes automáticos no `schema.yml` que rodam a cada execução do pipeline:
-* **`not_null`:** Garante que chaves primárias e IDs vitais nunca sejam nulos.
-* **`relationships`:** Assegura a integridade referencial entre a Tabela Fato (Pedidos) e as Dimensões (Clientes, Produtos), impedindo que um pedido referencie um cliente inexistente.
+### 2. Arquitetura Desacoplada (Ingestão vs Transformação)
+Ao invés de uma DAG monolítica, separei as responsabilidades. A DAG `01_ingestion.py` foca apenas em extrair e carregar o dado bruto. Ao finalizar, ela aciona a `02_transform.py`. Isso facilita o *backfill* e a manutenção: se a regra de negócio muda, rodo apenas a transformação, sem precisar reprocessar a ingestão (API/CSV).
 
-### 3. Deduplicação de Clientes (SCD Type 1)
-Um desafio comum no dataset do Olist é a duplicidade de clientes. Utilizei *Window Functions* para aplicar a lógica de manter apenas o registro mais recente:
+### 3. Data Quality e Testes (dbt)
+A confiança no dado é garantida via `schema.yml`. O pipeline falha automaticamente se:
+* **Integridade:** Um pedido na tabela fato referenciar um cliente inexistente (`relationships`).
+* **Completude:** IDs críticos estiverem nulos (`not_null`).
+* **Lógica de Negócio:** Tratamento de categorias nulas (`COALESCE`) e conversão de datas (`CAST`) direto no SQL.
+
+### 4. Gerenciamento de Conexões (IaC)
+Eliminei a necessidade de configurar conexões manualmente na interface do Airflow a cada deploy. Utilizei o arquivo `airflow_settings.yaml` para definir as credenciais do **AWS RDS** como código, garantindo que o ambiente suba pronto para uso.
+
+### 5. Deduplicação Avançada (SQL)
+Implementação de lógica **SCD Tipo 1** na camada Gold para unificar clientes duplicados, utilizando Window Functions (`ROW_NUMBER`) para priorizar sempre o registro mais recente do cliente.
 
 ```sql
 /* Exemplo da lógica de deduplicação */
@@ -55,17 +82,15 @@ ROW_NUMBER() OVER(
     ORDER BY customer_id DESC
 ) as rn
 ... WHERE rn = 1
-
-### 4. Orquestração como Código (Cosmos)
-Utilizei o **Astronomer Cosmos** para integrar o dbt ao Airflow. Isso permite que o Airflow renderize automaticamente cada modelo dbt como uma Task individual no grafo (DAG), respeitando as dependências definidas nas `refs` do SQL.
+```
 
 ---
 
 ## 🚀 Como Executar Localmente
 
 ### Pré-requisitos
-* Docker e Astro CLI instalados.
-* Git instalado.
+* Docker Desktop instalado e rodando.
+* **Astro CLI** instalado (Ferramenta de linha de comando da Astronomer).
 
 ### Passo a Passo
 
@@ -75,29 +100,30 @@ Utilizei o **Astronomer Cosmos** para integrar o dbt ao Airflow. Isso permite qu
     cd olist-data-pipeline
     ```
 
-2.  **Configure as Variáveis de Ambiente:**
-    Crie um arquivo `.env` na raiz do projeto com as credenciais do banco de dados (exemplo):
-    ```env
-    POSTGRES_USER=postgres
-    POSTGRES_PASSWORD=sua_senha
-    POSTGRES_HOST=seu_endpoint_rds_ou_local
-    POSTGRES_DB=olist
-    ```
+2.  **Verifique as Conexões:**
+    O arquivo `airflow_settings.yaml` já está configurado para criar a conexão `postgres_olist_dw` automaticamente.
+    *(Certifique-se de que suas credenciais da AWS ou do Banco Local estejam corretas neste arquivo).*
 
-3.  **Suba o Ambiente:**
+
+
+3.  **Inicie o Ambiente Astro:**
+    Este comando irá construir a imagem Docker e subir os containers do Airflow (Webserver, Scheduler, Triggerer e Postgres de metadados).
     ```bash
-    docker-compose up -d
+    astro dev start
     ```
 
 4.  **Acesse o Airflow:**
-    Abra `http://localhost:8080` no navegador (login/senha padrão: `admin`/`admin`). Ative a DAG `olist_dbt_dag` para iniciar o processamento.
+    Abra `http://localhost:8080` no seu navegador.
+    * **Usuário:** `admin`
+    * **Senha:** `admin`
+    
+    Ative a DAG **`01_ingestion`** e acompanhe o fluxo completo até a transformação no dbt.
+    
 
 ---
 
 ## 📊 Próximos Passos
 * [ ] Construção de Dashboard no Power BI conectado à camada Gold.
-* [ ] Implementação de alertas automáticos (Slack/Email) em caso de falha nos testes do dbt.
-* [ ] CI/CD para deploy automático dos modelos dbt.
 
 ---
 
