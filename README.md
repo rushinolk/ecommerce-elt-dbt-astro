@@ -5,6 +5,7 @@
 Este projeto implementa um pipeline de dados **ELT (Extract, Load, Transform)** completo utilizando o dataset do E-commerce Olist. O objetivo foi simular um ambiente corporativo moderno, onde a infraestrutura é gerenciada via código e a qualidade dos dados é garantida através de testes automatizados.
 
 O projeto utiliza o **Astro CLI** para gerenciamento do ambiente Airflow e segue uma arquitetura modular: uma DAG dedicada para ingestão de dados brutos (Python) e outra para transformação (dbt), garantindo desacoplamento e facilidade de manutenção.
+
 ---
 
 ## 🏗️ Arquitetura (Medallion)
@@ -76,12 +77,17 @@ Eliminei a necessidade de configurar conexões manualmente na interface do Airfl
 Implementação de lógica **SCD Tipo 1** na camada Gold para unificar clientes duplicados, utilizando Window Functions (`ROW_NUMBER`) para priorizar sempre o registro mais recente do cliente.
 
 ```sql
-/* Exemplo da lógica de deduplicação */
-ROW_NUMBER() OVER(
-    PARTITION BY customer_unique_id 
-    ORDER BY customer_id DESC
-) as rn
-... WHERE rn = 1
+with markup as (
+    select *,
+    ROW_NUMBER()
+    OVER(PARTITION BY customer_unique_id
+    ORDER BY customer_id DESC) as rn
+    from {{ref('stg_customers')}}  
+), final as (
+    select * from markup where rn = 1
+)
+
+select * from final
 ```
 
 ---
